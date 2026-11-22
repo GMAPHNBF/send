@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="si"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Chatly</title>
+<style>
+:root{--bg:#f0f2f5;--panel:#fff;--txt:#111b21;--mut:#667781;--pri:#00a884;--me:#d9fdd3;--them:#fff;--line:#e9edef;color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--bg:#0b141a;--panel:#111b21;--txt:#e9edef;--mut:#8696a0;--pri:#00a884;--me:#005c4b;--them:#202c33;--line:#222d34;color-scheme:dark}}
+*{box-sizing:border-box;margin:0}html,body{height:100%}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--txt);padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
+#login{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:24px}
+#login h1{font-size:34px;color:var(--pri)}#login p{color:var(--mut);max-width:320px}
+.btn{background:var(--pri);color:#fff;padding:12px 22px;border-radius:24px;font-weight:600}
+.app{display:none;height:100%;grid-template-columns:340px 1fr;max-width:1300px;margin:auto;background:var(--panel)}
+.side{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.top{display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--panel);border-bottom:1px solid var(--line)}
+.top b{flex:1}.av{width:42px;height:42px;border-radius:50%;background:var(--pri);color:#fff;display:grid;place-items:center;font-weight:700;object-fit:cover;flex:none}
+.list{overflow:auto;flex:1}
+.row{display:flex;gap:12px;padding:12px 14px;align-items:center;cursor:pointer;border-bottom:1px solid var(--line)}
+.row:hover,.row.on{background:var(--bg)}.row small{color:var(--mut)}
+.main{display:flex;flex-direction:column;min-height:0;background:var(--bg)}
+.empty{margin:auto;color:var(--mut);text-align:center;padding:20px}
+.msgs{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:6px}
+.m{max-width:75%;padding:7px 10px;border-radius:10px;background:var(--them);word-wrap:break-word;box-shadow:0 1px 1px #0002}
+.m.me{align-self:flex-end;background:var(--me)}.m img{max-width:100%;border-radius:8px;display:block;margin-bottom:4px}
+.m i{display:block;font-size:10px;color:var(--mut);text-align:right;font-style:normal}
+.bar{display:flex;gap:8px;padding:10px;background:var(--panel);align-items:center;border-top:1px solid var(--line)}
+.bar input[type=text]{flex:1;padding:11px 14px;border-radius:22px;border:1px solid var(--line);background:var(--bg);color:var(--txt);font:inherit}
+.ic{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font-size:19px}.ic:hover{background:var(--bg)}
+.send{background:var(--pri);color:#fff}.back{display:none}
+#call{position:fixed;inset:0;background:#0b141a;color:#fff;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:9}
+#call video{max-width:100%;max-height:70%;border-radius:12px;background:#000}#lv{position:absolute;right:14px;top:calc(14px + env(safe-area-inset-top,0px));width:110px!important;border:2px solid #fff}
+.red{background:#e53935;color:#fff;padding:14px 26px;border-radius:30px}.grn{background:#1faa59;color:#fff;padding:14px 26px;border-radius:30px}
+@media(max-width:760px){.app{grid-template-columns:1fr}.app.chatting .side{display:none}.app:not(.chatting) .main{display:none}.back{display:grid}}
+</style></head><body>
+<div id="login"><h1>💬 Chatly</h1><p>Real-time chat, photos, voice and video calls. Sign in with Google to start.</p>
+<button class="btn" id="gbtn">Continue with Google</button><small id="mode" style="color:var(--mut)"></small></div>
+<div class="app" id="app">
+ <div class="side"><div class="top"><div id="meav" class="av"></div><b id="mename"></b><button class="ic" id="out" title="Logout">⎋</button></div><div class="list" id="list"></div></div>
+ <div class="main" id="main"><div class="empty">Select a chat to start messaging</div></div>
+</div>
+<div id="call"><video id="rv" autoplay playsinline></video><video id="lv" autoplay playsinline muted></video><div id="cs">Calling…</div>
+<div><button class="grn" id="acc" style="display:none">Answer</button> <button class="red" id="end">End</button></div></div>
+<script type="module">
+// ===== PASTE YOUR FIREBASE CONFIG HERE (Firebase Console > Project settings > Web app) =====
+const CFG={apiKey:"YOUR_API_KEY",authDomain:"YOUR_PROJECT.firebaseapp.com",projectId:"YOUR_PROJECT",appId:"YOUR_APP_ID"};
+// ===========================================================================================
+const DEMO=CFG.apiKey.startsWith("YOUR"),$=s=>document.querySelector(s);
+const esc=s=>String(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let me,peer,unM,F,db,auth,pc,stream,callId,callUnsubs=[];
+$("#mode").textContent=DEMO?"Demo mode (add Firebase config for real accounts)":"";
+const cidOf=(a,b)=>[a,b].sort().join("_");
+// ---------- Data layer ----------
+const demoU=[{uid:"b1",name:"Nimal"},{uid:"b2",name:"Kasun"},{uid:"b3",name:"Sara"}],demoM={},demoL={};
+const S={
+ async init(){ if(DEMO)return; const b="https://www.gstatic.com/firebasejs/10.12.2/";
+  const [A,Au,Fs]=await Promise.all([import(b+"firebase-app.js"),import(b+"firebase-auth.js"),import(b+"firebase-firestore.js")]);
+  const app=A.initializeApp(CFG);auth=Au.getAuth(app);db=Fs.getFirestore(app);F={...Au,...Fs};
+  F.onAuthStateChanged(auth,u=>u&&S.ready(u));},
+ async login(){ if(DEMO)return start({uid:"me",name:"You"});
+  const r=await F.signInWithPopup(auth,new F.GoogleAuthProvider());S.ready(r.user);},
+ async ready(u){const p={uid:u.uid,name:u.displayName||u.email,photo:u.photoURL||""};
+  await F.setDoc(F.doc(db,"users",u.uid),{...p,seen:F.serverTimestamp()},{merge:true});start(p);},
+ async logout(){ if(!DEMO)await F.signOut(auth); location.reload();},
+ users(cb){ if(DEMO)return cb(demoU);
+  F.onSnapshot(F.collection(db,"users"),s=>cb(s.docs.map(d=>d.data()).filter(u=>u.uid!==me.uid)));},
+ msgs(cid,cb){ if(DEMO){demoL[cid]=cb;cb(demoM[cid]||[]);return()=>delete demoL[cid];}
+  return F.onSnapshot(F.query(F.collection(db,"chats",cid,"messages"),F.orderBy("ts")),s=>cb(s.docs.map(d=>d.data())));},
+ async send(cid,m){ if(DEMO){const a=demoM[cid]=demoM[cid]||[];a.push({...m,from:me.uid,ts:Date.now()});demoL[cid]?.(a);
+   setTimeout(()=>{a.push({from:peer.uid,text:"Hi! 👋 (demo reply)",ts:Date.now()});demoL[cid]?.(a)},900);return;}
+  await F.addDoc(F.collection(db,"chats",cid,"messages"),{...m,from:me.uid,ts:F.serverTimestamp()});}
+};
+// ---------- UI ----------
+function start(p){me=p;$("#login").style.display="none";$("#app").style.display="grid";
+ $("#mename").textContent=p.name;$("#meav").innerHTML=p.photo?`<img class="av" src="${esc(p.photo)}">`:esc(p.name[0]);
+ S.users(users=>{$("#list").innerHTML=users.map(u=>`<div class="row ${peer?.uid==u.uid?"on":""}" data-u="${esc(u.uid)}">${u.photo?`<img class="av" src="${esc(u.photo)}">`:`<div class="av">${esc(u.name[0])}</div>`}<div><b>${esc(u.name)}</b><br><small>Tap to chat</small></div></div>`).join("")||'<div class="empty">No other users yet. Ask a friend to sign in!</div>';
+  $("#list").onclick=e=>{const r=e.target.closest(".row");if(r)open(users.find(u=>u.uid==r.dataset.u));};});
+ listenCalls();}
+function open(u){peer=u;unM?.();$("#app").classList.add("chatting");const cid=cidOf(me.uid,u.uid);
+ $("#main").innerHTML=`<div class="top"><button class="ic back" id="bk">←</button><div class="av">${esc(u.name[0])}</div><b>${esc(u.name)}</b><button class="ic" id="ca">📞</button><button class="ic" id="cv">🎥</button></div>
+ <div class="msgs" id="ms"></div><div class="bar"><label class="ic">📷<input type="file" accept="image/*" id="fi" hidden></label><input type="text" id="tx" placeholder="Type a message" autocomplete="off"><button class="ic send" id="sd">➤</button></div>`;
+ $("#bk").onclick=()=>$("#app").classList.remove("chatting");
+ $("#ca").onclick=()=>call(false);$("#cv").onclick=()=>call(true);
+ const go=()=>{const t=$("#tx").value.trim();if(t){S.send(cid,{text:t});$("#tx").value=""}};
+ $("#sd").onclick=go;$("#tx").onkeydown=e=>e.key=="Enter"&&go();
+ $("#fi").onchange=async e=>{const f=e.target.files[0];if(f)S.send(cid,{img:await shrink(f)})};
+ unM=S.msgs(cid,a=>{const box=$("#ms");if(!box)return;box.innerHTML=a.map(m=>{const d=m.ts?.toDate?m.ts.toDate():new Date(m.ts||Date.now());
+  return `<div class="m ${m.from==me.uid?"me":""}">${m.img?`<img src="${m.img}">`:""}${esc(m.text)}<i>${d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</i></div>`}).join("");box.scrollTop=box.scrollHeight;});}
+function shrink(f){return new Promise(r=>{const i=new Image();i.onload=()=>{const k=Math.min(1,900/Math.max(i.width,i.height)),c=document.createElement("canvas");
+ c.width=i.width*k;c.height=i.height*k;c.getContext("2d").drawImage(i,0,0,c.width,c.height);r(c.toDataURL("image/jpeg",.7))};i.src=URL.createObjectURL(f)})}
+// ---------- Calls (WebRTC, signaling via Firestore) ----------
+const ICE={iceServers:[{urls:"stun:stun.l.google.com:19302"}]};
+async function media(video){stream=await navigator.mediaDevices.getUserMedia({audio:true,video});$("#lv").srcObject=stream;$("#call").style.display="flex";}
+function mkpc(side,ref){pc=new RTCPeerConnection(ICE);stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+ pc.ontrack=e=>{$("#rv").srcObject=e.streams[0];$("#cs").textContent="Connected"};
+ pc.onicecandidate=e=>e.candidate&&F.addDoc(F.collection(ref,side),e.candidate.toJSON());
+ const other=side=="caller"?"callee":"caller";
+ callUnsubs.push(F.onSnapshot(F.collection(ref,other),s=>s.docChanges().forEach(c=>c.type=="added"&&pc.addIceCandidate(c.doc.data()).catch(()=>{}))));}
+async function call(video){
+ try{await media(video)}catch{alert("Camera/microphone permission needed");return}
+ $("#cs").textContent=DEMO?"Demo mode: local preview only":"Calling "+peer.name+"…";
+ if(DEMO)return;
+ callId=Date.now()+"_"+me.uid;const ref=F.doc(db,"calls",callId);mkpc("caller",ref);
+ const o=await pc.createOffer();await pc.setLocalDescription(o);
+ await F.setDoc(ref,{from:me.uid,to:peer.uid,name:me.name,video,state:"ringing",offer:{type:o.type,sdp:o.sdp}});
+ callUnsubs.push(F.onSnapshot(ref,s=>{const d=s.data();if(!d)return;
+  if(d.answer&&!pc.currentRemoteDescription)pc.setRemoteDescription(d.answer);if(d.state=="ended")hang(false)}));}
+function listenCalls(){ if(DEMO)return;
+ F.onSnapshot(F.query(F.collection(db,"calls"),F.where("to","==",me.uid),F.where("state","==","ringing")),s=>{
+  s.docChanges().forEach(c=>{if(c.type!="added")return;const d=c.doc.data(),ref=c.doc.ref;callId=c.doc.id;
+   $("#call").style.display="flex";$("#cs").textContent=`${d.name} is calling (${d.video?"video":"voice"})…`;$("#acc").style.display="";
+   $("#acc").onclick=async()=>{$("#acc").style.display="none";
+    try{await media(d.video)}catch{return hang(true)}
+    mkpc("callee",ref);await pc.setRemoteDescription(d.offer);const a=await pc.createAnswer();await pc.setLocalDescription(a);
+    await F.updateDoc(ref,{answer:{type:a.type,sdp:a.sdp},state:"active"});
+    callUnsubs.push(F.onSnapshot(ref,x=>x.data()?.state=="ended"&&hang(false)));};});});}
+async function hang(notify){stream?.getTracks().forEach(t=>t.stop());pc?.close();callUnsubs.forEach(u=>u());callUnsubs=[];
+ $("#call").style.display="none";$("#acc").style.display="none";$("#rv").srcObject=null;
+ if(notify&&!DEMO&&callId)F.updateDoc(F.doc(db,"calls",callId),{state:"ended"}).catch(()=>{});callId=null;}
+$("#end").onclick=()=>hang(true);$("#gbtn").onclick=()=>S.login();$("#out").onclick=()=>S.logout();
+S.init();
+</script></body></html>
